@@ -1,0 +1,62 @@
+---
+name: npay-harvester
+description: >-
+  네이버페이 포인트 모음 링크(뽐뿌, 클리앙, daissue 등)를 입력받아
+  Ego Lite AI 브라우저 환경에서 유형별(3초 체류, 미션 클릭, 모바일 에뮬레이션 등)로
+  적립 작업을 자동 수행하고 수령 결과를 리포트하는 스킬입니다.
+---
+
+# 네이버페이 포인트 자동 수령기 (NPay Harvester)
+
+사용자가 커뮤니티(뽐뿌, 클리앙, 딜바다 등)나 메신저에서 공유된 네이버페이 포인트 적립 링크 모음(텍스트 또는 URL 목록)을 제공했을 때, **Ego Lite 브라우저의 격리된 Task Space와 로그인 세션을 활용**하여 포인트 수령 작업을 자동으로 완수합니다.
+
+---
+
+## 1. 활성화 조건 (Triggers)
+- 사용자가 "네페 링크 적립해줘", "네이버페이 모음 글 올려둘 테니 받아줘"라고 요청할 때
+- `campaign2.naver.com`, `ofw.adison.co`, `mycar.naver.com`, `daissue.app/link-opener` 등이 포함된 링크 목록을 공유했을 때
+
+---
+
+## 2. 작업 절차 (Workflow)
+
+### Step 1: 링크 파싱 및 전처리
+1. 사용자 입력 텍스트에서 모든 URL을 정규식으로 추출합니다.
+2. 뽐뿌 리다이렉트 링크(`s.ppomppu.co.kr/?...target=<base64>`)가 포함된 경우 `target` 파라미터를 base64 디코딩하여 원본 목적지 URL을 복원합니다.
+3. 중복 링크를 제거합니다.
+
+### Step 2: Ego Lite 브라우저 세션 시작
+1. 격리된 Task Space를 생성합니다:
+   ```javascript
+   const task = await taskSpace("npay-harvest");
+   const page = task.page("p1");
+   ```
+2. 작업 전 네이버페이 포인트 잔액(`https://point.pay.naver.com/pointshistory/list`)을 먼저 확인하여 시작 포인트를 기록합니다.
+
+### Step 3: 미션 유형별 정밀 수령
+1. **캠페인 클릭 적립 (`campaign2.naver.com`)**:
+   - 페이지 로드 후 `포인트 받기` 버튼 클릭
+   - 리다이렉트된 브랜드 스토어에서 **최소 3.5~4.5초 체류**
+2. **연금 혜택 (`pensionmission`)**:
+   - 미래에셋자산운용, 삼성자산운용 배너의 `확인하기` 버튼 각각 클릭 (+20원)
+3. **마이카 배너 (`mycar.naver.com`)**:
+   - 페이지 내 `clkMission` 링크 4~5개를 순차 방문 (+최대 10~12원)
+4. **보험 방문 랜덤 포인트 (`insurance.pay.naver.com`)**:
+   - `/point` 페이지의 당일 3개 방문 미션(`insu_v3_benefits_clk`) 순차 방문 (+최대 5원)
+5. **모바일 웹 전용 미션 (`home.pay.naver.com`, `new-m.pay.naver.com`)**:
+   - `page.cdp`를 통해 Android Chrome 모바일 `User-Agent` 및 뷰포트(412x915) 적용
+   - 결제홈 15초 스크롤 또는 메인 화면 적립 버튼 클릭
+6. **기타 Adison / 쇼핑라이브**:
+   - 해당 URL을 직접 방문하여 리워드 트리거 발생
+
+### Step 4: 결과 정산 및 리소스 정리
+1. 다시 `https://point.pay.naver.com/pointshistory/list`로 이동하여 **당일 적립 내역**과 **최종 잔액**을 조회합니다.
+2. 반드시 `await task.finish({ keep: [] })`를 호출하여 백그라운드 브라우저를 정리합니다.
+3. 최종 수령 금액과 상세 내역을 표 형태로 사용자에게 보고합니다.
+
+---
+
+## 3. 핵심 규칙 (Rules)
+- **Windows 실행 안전성**: 모든 Node.js 스크립트는 임시 `.mjs` 파일로 작성 후 `cmd /c "ego-browser nodejs < <경로>"` 형태로 실행합니다.
+- **체류 시간 보장**: 캠페인 링크는 단순 방문만으로는 적립되지 않으므로 반드시 `setTimeout(..., 4500)`으로 대기합니다.
+- **리소스 정리 필수**: 스크립트 종료 시 예외가 발생하더라도 `task.finish({ keep: [] })`가 실행되도록 보장합니다.
