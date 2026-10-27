@@ -38,7 +38,9 @@ export async function harvestNpayLinks({ rawInput, inputFilePath } = {}) {
   const results = {
     startPoints: 0,
     endPoints: 0,
+    earnedTotal: 0,
     processed: [],
+    uncollected: [],
     errors: []
   };
 
@@ -181,7 +183,38 @@ export async function harvestNpayLinks({ rawInput, inputFilePath } = {}) {
           continue;
         }
 
-        // Default navigation (Adison, Shopping live, etc.)
+        // Type 6: Shopping Live Pincrux Entry
+        if (url.includes("entry/pincrux") || url.includes("shopping-live.html")) {
+          await page.goto(url, { timeout: 25000 });
+          await new Promise(r => setTimeout(r, 3500));
+          // Expand "라이브 더 보기"
+          await page.evaluate(() => {
+            const btns = Array.from(document.querySelectorAll('*')).filter(el => (el.innerText || "").trim() === "라이브 더 보기");
+            if (btns.length > 0) btns[0].click();
+          });
+          await new Promise(r => setTimeout(r, 1500));
+          const liveUrls = await page.evaluate(() => {
+            const list = Array.from(document.querySelectorAll('.comming-list-item'));
+            return list.map(el => {
+              const onclick = el.getAttribute('onclick') || "";
+              const m = onclick.match(/Go\(['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\)/);
+              const title = el.getAttribute('data-bc_name') || el.innerText.replace(/\s+/g, ' ').trim().slice(0, 50);
+              return { title, url: m ? ("https://nsl.pincrux.com/" + m[1]) : null };
+            }).filter(x => x.url);
+          });
+          let liveCount = 0;
+          for (const it of liveUrls) {
+            try {
+              await page.goto(it.url, { timeout: 15000 });
+              await new Promise(r => setTimeout(r, 3500));
+              liveCount++;
+            } catch (e) {}
+          }
+          results.processed.push({ url, type: "shopping_live", count: liveCount });
+          continue;
+        }
+
+        // Default navigation (Adison, etc.)
         await page.goto(url, { timeout: 20000 });
         await new Promise(r => setTimeout(r, 2500));
         results.processed.push({ url, type: "direct_visit", status: "success" });
@@ -199,6 +232,7 @@ export async function harvestNpayLinks({ rawInput, inputFilePath } = {}) {
       const m = el ? el.innerText.replace(/[^0-9]/g, "") : "0";
       return parseInt(m, 10) || 0;
     });
+    results.earnedTotal = results.endPoints - results.startPoints;
 
   } finally {
     await task.finish({ keep: [] });
