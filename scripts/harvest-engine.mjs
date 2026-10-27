@@ -183,18 +183,21 @@ export async function harvestNpayLinks({ rawInput, inputFilePath } = {}) {
           continue;
         }
 
-        // Type 6: Shopping Live Pincrux Entry
+        // Type 6: Shopping Live Pincrux Entry (Coming Soon 방송 예고 전수 수령)
         if (url.includes("entry/pincrux") || url.includes("shopping-live.html")) {
           await page.goto(url, { timeout: 25000 });
-          await new Promise(r => setTimeout(r, 3500));
-          // Expand "라이브 더 보기"
+          await new Promise(r => setTimeout(r, 4000));
+          // Expand "라이브 더 보기" to reveal all Coming Soon cards (morning & evening batches)
           await page.evaluate(() => {
-            const btns = Array.from(document.querySelectorAll('*')).filter(el => (el.innerText || "").trim() === "라이브 더 보기");
+            const btns = Array.from(document.querySelectorAll('*')).filter(el => {
+              const t = (el.innerText || "").trim();
+              return (t === "라이브 더 보기" || t === "라이브 더보기") && el.children.length === 0;
+            });
             if (btns.length > 0) btns[0].click();
           });
-          await new Promise(r => setTimeout(r, 1500));
+          await new Promise(r => setTimeout(r, 2000));
           const liveUrls = await page.evaluate(() => {
-            const list = Array.from(document.querySelectorAll('.comming-list-item'));
+            const list = Array.from(document.querySelectorAll('.comming-list-item, [id*="ready-scroll-box"] ul.comming-list-item'));
             return list.map(el => {
               const onclick = el.getAttribute('onclick') || "";
               const m = onclick.match(/Go\(['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\)/);
