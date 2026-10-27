@@ -183,11 +183,44 @@ export async function harvestNpayLinks({ rawInput, inputFilePath } = {}) {
           continue;
         }
 
-        // Type 6: Shopping Live Pincrux Entry (Coming Soon 방송 예고 전수 수령)
+        // Type 6: Shopping Live Pincrux Entry (On-Air 실시간 5원 + Coming Soon 예고 1원 전수 수령)
         if (url.includes("entry/pincrux") || url.includes("shopping-live.html")) {
           await page.goto(url, { timeout: 25000 });
           await new Promise(r => setTimeout(r, 4000));
-          // Expand "라이브 더 보기" to reveal all Coming Soon cards (morning & evening batches)
+
+          // 1. On-Air 방송 처리 (방송당 5초 카운트다운 타이머 충족을 위해 11초 체류 -> 각 3~5원)
+          const onairItems = await page.evaluate(() => {
+            const box = document.querySelector('#onair-list') || document.querySelector('.onair-exist-list');
+            if (!box) return [];
+            return Array.from(box.querySelectorAll('li.list-item')).map(el => {
+              const onclick = el.getAttribute('onclick') || "";
+              const m = onclick.match(/Go\(['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\)/);
+              const title = el.getAttribute('data-bc_name') || el.innerText.replace(/\s+/g, ' ').trim();
+              return {
+                title,
+                url: m ? ("https://nsl.pincrux.com/" + m[1]) : null,
+                status: m ? m[2] : 'onair'
+              };
+            }).filter(x => x.url);
+          });
+
+          let onairClaimed = 0;
+          for (const it of onairItems) {
+            try {
+              await page.evaluate(({ url, status }) => {
+                sessionStorage.setItem('bc_status', status);
+                location.href = url;
+              }, it);
+              await new Promise(r => setTimeout(r, 11000));
+              onairClaimed++;
+            } catch (e) {}
+          }
+
+          // Return to entry page
+          await page.goto(url, { timeout: 25000 });
+          await new Promise(r => setTimeout(r, 3000));
+
+          // 2. Expand "라이브 더 보기" to reveal all Coming Soon cards (morning & evening batches)
           await page.evaluate(() => {
             const btns = Array.from(document.querySelectorAll('*')).filter(el => {
               const t = (el.innerText || "").trim();
@@ -196,6 +229,7 @@ export async function harvestNpayLinks({ rawInput, inputFilePath } = {}) {
             if (btns.length > 0) btns[0].click();
           });
           await new Promise(r => setTimeout(r, 2000));
+
           const liveUrls = await page.evaluate(() => {
             const list = Array.from(document.querySelectorAll('.comming-list-item, [id*="ready-scroll-box"] ul.comming-list-item'));
             return list.map(el => {
@@ -205,6 +239,7 @@ export async function harvestNpayLinks({ rawInput, inputFilePath } = {}) {
               return { title, url: m ? ("https://nsl.pincrux.com/" + m[1]) : null };
             }).filter(x => x.url);
           });
+
           let liveCount = 0;
           for (const it of liveUrls) {
             try {
@@ -213,7 +248,7 @@ export async function harvestNpayLinks({ rawInput, inputFilePath } = {}) {
               liveCount++;
             } catch (e) {}
           }
-          results.processed.push({ url, type: "shopping_live", count: liveCount });
+          results.processed.push({ url, type: "shopping_live", onairCount: onairClaimed, previewCount: liveCount });
           continue;
         }
 

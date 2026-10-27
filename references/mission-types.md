@@ -31,12 +31,16 @@
   - 반드시 CDP를 통해 모바일 `User-Agent`와 모바일 뷰포트(`width: 412, height: 915`)를 설정한 상태로 접속해야 함.
   - 결제홈 스크롤 미션의 경우 15초 이상 연속 상/하단 스크롤 유지 필요.
 
-### 6. 쇼핑라이브 방송 미리보기 (`external-token.pay.naver.com/entry/pincrux`)
-* **특징:** 핀크럭스(Pincrux) 연동 쇼핑라이브 방송 예고 리스트 (1원씩 최대 20~25건 지급).
+### 6. 쇼핑라이브 핀크럭스 (`external-token.pay.naver.com/entry/pincrux`)
+* **특징:** On-Air 실시간 방송(최대 5원) 및 Coming Soon 방송 예고 리스트 (1원씩 다수 지급).
 * **수령 조건:**
-  - `shopping-live.html` 진입 후 **반드시 `라이브 더 보기`를 클릭**하여 가려진 Coming Soon(오전 및 오후/저녁 방송 전체) 카드를 전부 전개해야 함.
-  - 각 항목(`.comming-list-item`, `ready-scroll-box`)의 onclick 핸들러에 바인딩된 `live-view.html?bno=...` 링크를 추출하여 직접 방문.
-  - `1초 후 적립 / 1원 적립 완료` 토스트가 뜰 때까지 각 페이지당 **최소 3.5초 체류**.
+  - **On-Air 실시간 방송 (최대 5원/건)**:
+    * 상단 `#onair-list`의 방송 카드(`status='onair'`)를 클릭하여 `live-view.html`에 진입.
+    * 페이지 내부 5초 카운트다운 타이머가 0초로 만료되고 *"N원 적립 완료"* 토스트가 뜰 때까지 **최소 11초 체류** 필수. (각 3~5원 지급)
+  - **Coming Soon 방송 예고 (1원/건)**:
+    * `shopping-live.html` 진입 후 **반드시 `라이브 더 보기`를 클릭**하여 가려진 Coming Soon(오전 및 오후/저녁 방송 전체) 카드를 전부 전개해야 함.
+    * 각 항목(`.comming-list-item`, `ready-scroll-box`)의 onclick 핸들러에 바인딩된 `live-view.html?bno=...` 링크를 추출하여 직접 방문.
+    * `1초 후 적립 / 1원 적립 완료` 토스트가 뜰 때까지 각 페이지당 **최소 3.5초 체류**.
 
 ---
 
