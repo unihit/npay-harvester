@@ -278,3 +278,80 @@ export async function harvestNpayLinks({ rawInput, inputFilePath } = {}) {
 
   return results;
 }
+
+/**
+ * Builds a standardized Discord Card Embed from harvest results
+ */
+export function buildDiscordEmbed({
+  title = "네이버페이 포인트 수령 완료",
+  sourceUrl,
+  targetAmount = 79,
+  startPoints = 0,
+  endPoints = 0,
+  summaryItems = [],
+  pendingItems = []
+} = {}) {
+  const earned = endPoints - startPoints;
+  const rate = targetAmount > 0 ? Math.round((earned / targetAmount) * 100) : 100;
+
+  const defaultSummary = summaryItems.length > 0 ? summaryItems.join("\n") : "• 전체 대상 링크 순회 완료";
+  const defaultPending = pendingItems.length > 0 ? pendingItems.join("\n") : "• 미적립 또는 추가 대기 항목 없음";
+
+  return {
+    embeds: [
+      {
+        title: `💚 ${title}`,
+        url: sourceUrl || "https://point.pay.naver.com/pointshistory/list",
+        color: 247642, // #03C75A Naver Green
+        fields: [
+          {
+            name: "💰 적립 결과",
+            value: `**+${earned.toLocaleString()}원** (목표 ${targetAmount}원 대비 ${rate}%)\n잔액: \`${startPoints.toLocaleString()}원\` ➔ **\`${endPoints.toLocaleString()}원\`**`,
+            inline: false
+          },
+          {
+            name: "📋 수령 요약",
+            value: defaultSummary,
+            inline: false
+          },
+          {
+            name: "⚠️ 미적립 & 추가 대기",
+            value: defaultPending,
+            inline: false
+          }
+        ],
+        footer: {
+          text: "NPay Harvester"
+        },
+        timestamp: new Date().toISOString()
+      }
+    ]
+  };
+}
+
+/**
+ * Sends embed payload to Discord Webhook
+ */
+export async function sendDiscordWebhook(webhookUrl, embedPayload) {
+  let targetUrl = webhookUrl || process.env.DISCORD_WEBHOOK_URL;
+  if (!targetUrl) {
+    try {
+      const configPath = new URL("../config.json", import.meta.url);
+      if (fs.existsSync(configPath)) {
+        const cfg = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+        targetUrl = cfg.discordWebhookUrl;
+      }
+    } catch (e) {}
+  }
+  if (!targetUrl) throw new Error("Discord Webhook URL is missing");
+  const res = await fetch(targetUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(embedPayload)
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Failed to send Discord webhook: ${res.status} ${txt}`);
+  }
+  return true;
+}
