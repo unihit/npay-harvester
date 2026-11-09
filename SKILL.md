@@ -14,46 +14,200 @@ description: >-
 
 ## 1. 활성화 조건 (Triggers)
 - 사용자가 "네페 링크 적립해줘", "네이버페이 모음 글 올려둘 테니 받아줘"라고 요청할 때
-- `campaign2.naver.com`, `ofw.adison.co`, `mycar.naver.com`, `daissue.app/link-opener` 등이 포함된 링크 목록을 공유했을 때
+- `campaign2.naver.com`, `ofw.adison.co`, `mycar.naver.com`, `insurance.pay.naver.com`, `home.pay.naver.com`, `daissue.app/link-opener` 등이 포함된 링크 목록을 공유했을 때
 
 ---
 
 ## 2. 작업 절차 (Workflow)
 
-### Step 1: 링크 파싱 및 전처리
-1. 사용자 입력 텍스트에서 모든 URL을 정규식으로 추출합니다.
-2. 뽐뿌 리다이렉트 링크(`s.ppomppu.co.kr/?...target=<base64>`)가 포함된 경우 `target` 파라미터를 base64 디코딩하여 원본 목적지 URL을 복원합니다.
-3. 중복 링크를 제거합니다.
+### Step 1: 링크 파싱 및 목표 기대치 산출
+1. **뽐뿌 재테크포럼 자동 탐색 및 크롤링**:
+   - 뽐뿌 목록 페이지 접속 후 `a[href*="view.php?id=money"]` 또는 `tr.baseList` 기반으로 당일 날짜(예: `11/9` 또는 `11월 9일`) 및 `네페`/`네이버페이` 포함 글을 타깃팅합니다. (구형 `tr.list0, tr.list1` 셀렉터는 변경되었으므로 금지)
+   - 타깃 게시글 진입 후 본문(`.board-contents`, `#body`)에서 링크 및 본문 텍스트를 추출합니다.
+2. 사용자 입력 텍스트 또는 뽐뿌 게시글 제목에서 **목표 기대 금액**을 추출합니다:
+   - 제목 패턴: `11/1일자 네이버페이 134원(114원) + 랜덤포인트 모음`
+   - 정규식: `/(?:네페|네이버페이)\s*(\d+)원(?:\s*\(\s*(\d+)원\s*\))?/i`
+   - `maxTarget` = 134원 (연금/조건부 포함 전체 금액)
+   - `baseTarget` = 114원 (괄호 안의 기본 확정 금액, 괄호가 없을 시 주 금액)
+   - 1차 목표 기대치(`targetExpected`) = `baseTarget` (기본 확정치 기준)
+3. 본문에서 모든 URL을 정규식으로 추출합니다.
+4. 뽐뿌 리다이렉트 링크(`s.ppomppu.co.kr/?...target=<base64>`)가 포함된 경우 `target` 파라미터를 base64 디코딩하여 원본 목적지 URL을 복원합니다.
+5. 중복 링크를 제거합니다.
 
 ### Step 2: Ego Lite 브라우저 세션 시작
-1. 격리된 Task Space를 생성합니다:
+1. 격리된 Task Space를 생성하고 페이지 크래시 방지용 `getPage()` 및 인증서 오류 무시 설정을 적용합니다:
    ```javascript
    const task = await taskSpace("npay-harvest");
-   const page = task.page("p1");
+   let currentPage = task.page("p1");
+   try { await currentPage.cdp("Security.setIgnoreCertificateErrors", { ignore: true }); } catch (e) {}
+
+   async function getPage() {
+     try {
+       await currentPage.evaluate(() => 1);
+       return currentPage;
+     } catch (e) {
+       const pages = task.pages();
+       currentPage = (pages && pages.length > 0) ? pages[0] : await task.newPage();
+       try { await currentPage.cdp("Security.setIgnoreCertificateErrors", { ignore: true }); } catch (eIgnore) {}
+       return currentPage;
+     }
+   }
    ```
 2. 작업 전 네이버페이 포인트 잔액(`https://point.pay.naver.com/pointshistory/list`)을 먼저 확인하여 시작 포인트를 기록합니다.
 
-### Step 3: 미션 유형별 정밀 수령
-1. **캠페인 클릭 적립 (`campaign2.naver.com`)**:
-   - 페이지 로드 후 `포인트 받기` 버튼 클릭
-   - 리다이렉트된 브랜드 스토어에서 **최소 3.5~4.5초 체류**
-2. **연금 혜택 (`pensionmission`)**:
-   - 미래에셋자산운용, 삼성자산운용 배너의 `확인하기` 버튼 각각 클릭 (+20원)
-3. **마이카 배너 (`mycar.naver.com`)**:
-   - 페이지 내 `clkMission` 링크 4~5개를 순차 방문 (+최대 10~12원)
-4. **보험 방문 랜덤 포인트 (`insurance.pay.naver.com`)**:
-   - `/point` 페이지의 당일 3개 방문 미션(`insu_v3_benefits_clk`) 순차 방문 (+최대 5원)
-5. **모바일 웹 전용 미션 (`home.pay.naver.com`, `new-m.pay.naver.com`)**:
-   - `page.cdp`를 통해 Android Chrome 모바일 `User-Agent` 및 뷰포트(412x915) 적용
-   - 결제홈 15초 스크롤 또는 메인 화면 적립 버튼 클릭
-6. **쇼핑라이브 방송 미리보기 (`external-token.pay.naver.com/entry/pincrux`)**:
-   - `라이브 더 보기`를 펼친 후 각 방송 예고의 `live-view.html?bno=...` 링크를 추출하여 개별 방문
-   - `1원 적립 완료` 토스트 확인을 위해 **최소 3.5초 체류** 필수
-7. **기타 Adison / 제휴 프로모션**:
-   - 해당 URL을 직접 방문하여 리워드 트리거 발생
+### Step 3: 미션 유형별 정밀 수령 (1차 Pass)
 
-### Step 4: 결과 정산, 미적립 원인 분석 및 리소스 정리
-1. 다시 `https://point.pay.naver.com/pointshistory/list`로 이동하여 **당일 적립 내역**과 **최종 잔액**을 조회합니다.
+#### 1. 캠페인 클릭 적립 (`campaign2.naver.com`)
+- 페이지 로드 후 `포인트 받기` 또는 `적립하기` 버튼 클릭
+- 리다이렉트된 브랜드 스토어에서 **최소 4.5초 체류**
+
+#### 2. 마이카 '포인트 쉽게 받기' 배너 5종 (`mycar.naver.com`)
+> [!IMPORTANT]
+> `clkMission` 링크(`ica.pay.naver.com/...`)는 단순 `page.goto`로 이동하면 리퍼러 소실 및 외부 사이트 이탈로 인해 `클릭 ?원` 상태가 유지되고 적립이 누락됩니다.
+- **표준 실행 절차**:
+  1. `https://mycar.naver.com/?from=push1` 접속 후 `포인트 쉽게 받기` 섹션으로 스크롤
+  2. 페이지 내 `a[href*="clkMission"]` 엘리먼트 5개를 추출
+  3. 각 링크 엘리먼트의 `target = '_self'`를 지정하고 **페이지 내에서 `.click()` 호출**
+  4. 랜딩 페이지 이동 후 **최소 5.5초 체류**
+  5. 다시 `mycar.naver.com`으로 복귀하여 다음 배너를 순차 클릭
+  6. 5개 배너 순회 완료 후 마이카 페이지를 재조회하여 **`2원 받기완료`**로 갱신되었는지 검증
+
+```javascript
+// 마이카 5종 정밀 수령 모범 로직
+for (let i = 0; i < bannerList.length; i++) {
+  const currentUrl = await page.evaluate(() => window.location.href);
+  if (!currentUrl.includes("mycar.naver.com")) {
+    await page.goto("https://mycar.naver.com/?from=push1", { timeout: 20000 });
+    await sleep(2500);
+  }
+  await page.evaluate((targetHref) => {
+    const link = Array.from(document.querySelectorAll('a[href*="clkMission"]')).find(a => a.href === targetHref);
+    if (link) {
+      link.target = '_self';
+      link.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      link.click();
+    }
+  }, bannerList[i].href);
+  await sleep(5500);
+}
+```
+
+#### 3. 보험 방문 랜덤 포인트 (`insurance.pay.naver.com`)
+> [!IMPORTANT]
+> `/point` 페이지의 당일 3개 방문 미션(`insu_v3_benefits_clk`)은 단순 URL 이동 시 판정 지연으로 미적립(`?원`)될 수 있습니다.
+- **표준 실행 절차**:
+  1. `https://insurance.pay.naver.com/point` 접속
+  2. 배너 엘리먼트 3개를 직접 클릭하여 방문
+  3. 보험사 랜딩 페이지에서 **최소 6초 체류**
+  4. `/point`로 복귀하여 `오늘 총 X원 받았어요` 및 3개 배너의 완료 상태 확인
+
+#### 4. Npay 모바일 홈 '여기 누르면 3원' (`home.pay.naver.com`)
+> [!IMPORTANT]
+> 네이버페이 모바일 메인의 '여기 누르면 3원'은 화면 하단 **'포인트뽑기' (`point-draw`) 컴포넌트**의 클릭 적립 카드입니다.
+> 이는 내부적으로 `campaign2.naver.com/npay/v2/click-point/?eventId=cr_pointdraw_...` 또는 `pointdraw_...` 이벤트로 매핑됩니다.
+- **표준 실행 절차**:
+  1. `CDP`로 Android Chrome UA + Viewport(412x915) + `setTouchEmulationEnabled` 활성화
+  2. `https://home.pay.naver.com/?from=pay_main` (또는 `?from=main_pay_icon`) 접속 후 방해 팝업(`레이어 닫기` 등) 제거
+  3. **페이지 데이터 기반 정밀 추출 (최우선)**:
+     - 페이지 내 `<script>` 태그의 `self.__next_f` 데이터에서 `cr_pointdraw_...` 및 `pointdraw_...` 정규식 추출
+     - 추출된 이벤트 URL들(`campaign2.naver.com/npay/v2/click-point/?eventId=...`)을 순차 방문하여 수령 (캠페인당 1회, 1~3원)
+  4. **DOM 버튼 클릭 백업**:
+     - `document.querySelectorAll('[class*="point-draw"] [class*="button"]')` 또는 `point-draw_image-button` 엘리먼트가 보일 경우 직접 `.click()` 수행
+
+```javascript
+// Npay 모바일 홈 3원 / 포인트뽑기 자동 추출 & 수령 로직
+const pointdrawUrls = await page.evaluate(() => {
+  const scripts = Array.from(document.querySelectorAll('script')).map(s => s.innerText);
+  const urls = new Set();
+  const regex = /https%3A%2F%2Fcampaign2\.naver\.com%2Fnpay%2Fv2%2Fclick-point%2F%3FeventId%3D[a-zA-Z0-9_-]+/g;
+  scripts.forEach(s => {
+    let m;
+    while ((m = regex.exec(s)) !== null) urls.add(decodeURIComponent(m[0]));
+  });
+  return Array.from(urls);
+});
+
+for (const url of pointdrawUrls) {
+  await page.goto(url, { timeout: 15000 });
+  await sleep(2500);
+}
+```
+
+#### 5. 쇼핑라이브 (Pincrux)
+- **On-Air Live 방송**: 온에어 리스트 방송 클릭 후 **최소 11.5초 체류** (+건당 5원)
+- **Coming Soon 방송 예고**: `라이브 더 보기` 확장 클릭 후 모든 예고 카드 순환 방문 (건당 3.5초 체류, +건당 1원)
+
+#### 6. 결제홈 15초 스크롤 (`new-m.pay.naver.com`)
+> [!IMPORTANT]
+> 결제홈(`https://new-m.pay.naver.com/historybenefit/home`) 미션은 **실제 연속 스크롤 이벤트가 지속적으로 유입되어야만 15초 카운트다운 타이머가 감소**합니다.
+> 단일 `page.evaluate()` 장시간 루프는 브라우저 Evaluation 타임아웃(15초)을 유발하므로, **Node.js 레벨에서 200~250ms 간격으로 상하 스크롤을 트리거**해야 합니다.
+- **표준 실행 절차**:
+  1. 모바일 에뮬레이션(412x915) 상태로 `https://new-m.pay.naver.com/historybenefit/home` 접속
+  2. 초기 스크롤(`window.scrollBy(0, 500)`)로 하단 플로팅 배너 `[class*="FloatingRewardBanner_article"]` 마운트 유도
+  3. **연속 스크롤 루프**: Node.js 루프(약 18~20초) 동안 250ms 주기로 `window.scrollBy(0, delta)`를 상하 반전하며 실행
+  4. 타이머 텍스트(`00:15초 남았어요` -> `00:00초` / `10원 받았어요!` / `포인트 받기`) 감시
+  5. 카운트다운 완료 시 `FloatingRewardBanner_article` 클릭하여 10원 적립 확정
+  6. **추가 5원 (Round 2)**: 배너가 `또 받고 싶다면?` 또는 `추가 포인트` 상태로 변경되면 배너를 클릭하고 2차 스크롤 루프를 수행하여 추가 적립
+
+```javascript
+// 결제홈 15초 연속 스크롤 수령 표준 로직
+let direction = 1;
+let totalElapsedMs = 0;
+const intervalMs = 250;
+const maxDurationMs = 25000;
+
+while (totalElapsedMs < maxDurationMs) {
+  await page.evaluate((dir) => {
+    const delta = dir * (80 + Math.floor(Math.random() * 40));
+    window.scrollBy(0, delta);
+    if (window.scrollY > 2500) window.scrollBy(0, -400);
+    else if (window.scrollY < 300) window.scrollBy(0, 400);
+  }, direction);
+
+  const bannerText = await page.evaluate(() => {
+    const el = document.querySelector('[class*="FloatingRewardBanner_article"]');
+    return el ? el.innerText.replace(/\s+/g, ' ').trim() : null;
+  });
+
+  if (bannerText && (bannerText.includes("00:00") || bannerText.includes("받았어요") || bannerText.includes("포인트 받기"))) {
+    // 카운트다운 완료
+    await page.evaluate(() => {
+      const el = document.querySelector('[class*="FloatingRewardBanner_article"]');
+      if (el) el.click();
+    });
+    break;
+  }
+
+  await sleep(intervalMs);
+  totalElapsedMs += intervalMs;
+  if (Math.floor(totalElapsedMs / 2000) % 2 === 0) direction = 1; else direction = -1;
+}
+```
+
+#### 7. 기타 미션 (연금 혜택 및 Adison 광고)
+- **연금 혜택 (`pensionmission`)**: 미래에셋/삼성자산운용 배너 클릭 (+20원, 7일 주기)
+- **Adison 제휴 광고 (`ofw.adison.co`)**: URL 직접 방문 후 3.5초 체류
+
+---
+
+### Step 4: 갭 분석(Gap Analysis) 및 2차 전수 재조사 (Retry Audit Loop)
+
+1차 수령 후 중간 잔액을 확인하여 목표 금액과의 갭을 계산합니다:
+```javascript
+const netEarned = midPoints - startPoints;
+const gap = targetExpected - netEarned;
+```
+
+#### 갭 발생 기준 및 대응 프로토콜:
+* **정상 완료 (`gap < 5원`)**:
+  - 목표치에 충분히 도달한 것으로 판단하고 곧바로 최종 정산 및 디스코드 성공 리포트를 발송합니다.
+* **부족액 발생 (`gap >= 5원`)**:
+  - 목표 기대치 대비 5원 이상 부족할 경우 **즉시 디스코드 1차 경보 알림을 전송**하고 **2차 전수 재조사 및 누락 미션 재수령 루프**를 실행합니다.
+
+---
+
+### Step 5: 결과 정산 및 리소스 정리
+1. 최종 `https://point.pay.naver.com/pointshistory/list`로 이동하여 **당일 적립 내역**과 **최종 잔액**을 조회합니다.
 2. 반드시 `await task.finish({ keep: [] })`를 호출하여 백그라운드 브라우저를 정리합니다.
 3. 사용자에게 최종 결과를 보고할 때 **반드시 아래 3단계 구조로 상세 항목별 처리 결과와 미적립 원인을 명확히 포함**합니다:
    - **(1) 적립 정산 요약**: 작업 전 잔액, 작업 후 잔액, 순수 적립 금액 (+N원)
@@ -71,7 +225,10 @@ description: >-
 
 ## 3. 핵심 규칙 (Rules)
 - **Windows 실행 안전성**: 모든 Node.js 스크립트는 임시 `.mjs` 파일로 작성 후 `cmd /c "ego-browser nodejs < <경로>"` 형태로 실행합니다.
-- **체류 시간 보장**: 캠페인 링크는 단순 방문만으로는 적립되지 않으므로 반드시 `setTimeout(..., 4500)`으로 대기합니다.
+- **DOM 직접 클릭 원칙**: 마이카(`clkMission`), 보험(`insu_v3`), 모바일 홈 3원은 단순 `goto` 금지, 반드시 DOM 상에서 엘리먼트를 클릭하고 충분한 체류 시간(4.5~6초)을 부여합니다.
+- **모바일 팝업 사전 제거**: 모바일 웹 미션 진입 시 화면을 덮는 팝업 레이어를 반드시 먼저 닫아 클릭 차단을 방지합니다.
+- **체류 시간 보장**: 캠페인(4.5초), 마이카(5.5초), 보험(6초), 모바일3원(4.5초), 라이브On-Air(11.5초), Coming Soon(3.5초).
+- **5원 이상 갭 발생 시 자동 재조사**: 제목 기준치 대비 5원 이상 부족 시 2차 전수 재조사 및 디스코드 경보 발송을 강제합니다.
 - **리소스 정리 필수**: 스크립트 종료 시 예외가 발생하더라도 `task.finish({ keep: [] })`가 실행되도록 보장합니다.
 - **DOM 텍스트 덤프 금지**: 웹페이지 내의 무관한 본문(주문내역, 일반 숫자, 메뉴 등)을 그대로 메시지에 복사하지 말고, 수령 완료 여부 및 카테고리별 건수/금액만 정제하여 출력합니다.
 
