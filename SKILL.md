@@ -230,22 +230,29 @@ const gap = targetExpected - netEarned;
 - **체류 시간 보장**: 캠페인(4.5초), 마이카(5.5초), 보험(6초), 모바일3원(4.5초), 라이브On-Air(11.5초), Coming Soon(3.5초).
 - **5원 이상 갭 발생 시 자동 재조사**: 제목 기준치 대비 5원 이상 부족 시 2차 전수 재조사 및 디스코드 경보 발송을 강제합니다.
 - **리소스 정리 필수**: 스크립트 종료 시 예외가 발생하더라도 `task.finish({ keep: [] })`가 실행되도록 보장합니다.
+- **기준 게시글 링크 필수 포함**: 디스코드 알림 발송 시 Embed Title URL, Description 및 Fields에 기준 게시글(뽐뿌 등)의 제목과 링크(URL)를 반드시 포함하여 발송합니다.
 - **DOM 텍스트 덤프 금지**: 웹페이지 내의 무관한 본문(주문내역, 일반 숫자, 메뉴 등)을 그대로 메시지에 복사하지 말고, 수령 완료 여부 및 카테고리별 건수/금액만 정제하여 출력합니다.
 
 ---
 
 ## 4. 디스코드 알림 표준 포맷 (Discord Embed Format)
 
-디스코드 웹훅 발송 또는 결과 보고 시 다음 카드형 규격을 반드시 준수합니다.
+디스코드 웹훅 발송 또는 결과 보고 시 다음 카드형 규격을 반드시 준수합니다 (기준 게시글 링크 필수 포함).
 
 ```json
 {
   "embeds": [
     {
-      "title": "💚 네이버페이 포인트 수령 완료",
-      "url": "https://point.pay.naver.com/pointshistory/list",
+      "title": "💰 [전수 수령 완수] 오늘의 네이버페이 자동 수령 결과",
+      "url": "{postUrl}",
+      "description": "**[{postTitle}]({postUrl})** 게시글 기반으로 전수 수령을 완수했습니다.",
       "color": 247642,
       "fields": [
+        {
+          "name": "🔗 기준 게시글",
+          "value": "[{postTitle}]({postUrl})",
+          "inline": false
+        },
         {
           "name": "💰 적립 결과",
           "value": "**+{earned}원** (목표 {target}원 대비 {rate}%)\n잔액: `{startPoints}원` ➔ **`{endPoints}원`**",
@@ -263,9 +270,9 @@ const gap = targetExpected - netEarned;
         }
       ],
       "footer": {
-        "text": "NPay Harvester"
+        "text": "Antigravity × Ego Lite NPay Harvester"
       },
-      "timestamp": "2026-10-28T10:20:00.000Z"
+      "timestamp": "2026-11-10T10:20:00.000Z"
     }
   ]
 }
